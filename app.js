@@ -352,12 +352,19 @@ function getFilters() {
 
 function applyFilters() {
   const { nameQ, locQ } = getFilters();
-  filteredEnemies = allEnemies.filter((e) => {
-    if (!showAllEnemies && !e.isBoss) return false;
-    if (nameQ && !e.name.toLowerCase().includes(nameQ)) return false;
-    if (locQ && !e.location.toLowerCase().includes(locQ)) return false;
-    return true;
-  });
+  filteredEnemies = allEnemies
+    .filter((e) => {
+      if (!showAllEnemies && !e.isBoss) return false;
+      if (nameQ && !e.name.toLowerCase().includes(nameQ)) return false;
+      if (locQ && !e.location.toLowerCase().includes(locQ)) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const da = a.defense == null ? Number.POSITIVE_INFINITY : a.defense;
+      const db = b.defense == null ? Number.POSITIVE_INFINITY : b.defense;
+      if (da !== db) return da - db;
+      return a.name.localeCompare(b.name);
+    });
   renderLimit = PAGE_SIZE;
   renderResults();
 }
