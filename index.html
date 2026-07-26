@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Elden Ring Enemy Data</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header-brand">
+        <h1>Elden Ring</h1>
+        <p class="subtitle">Enemy Data Browser</p>
+      </div>
+      <div class="search-bar">
+        <div class="field">
+          <label for="name-search">Enemy name</label>
+          <input
+            id="name-search"
+            type="search"
+            placeholder="Search by name…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="field">
+          <label for="location-search">Location</label>
+          <input
+            id="location-search"
+            type="search"
+            list="location-list"
+            placeholder="Search by location…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <datalist id="location-list"></datalist>
+        </div>
+        <div class="field field-toggle">
+          <span class="field-caption">Filter</span>
+          <button
+            type="button"
+            id="show-all-toggle"
+            class="toggle-btn"
+            aria-pressed="false"
+            title="Toggle between bosses only and all enemies"
+          >
+            Bosses only
+          </button>
+        </div>
+      </div>
+      <p id="result-count" class="result-count" aria-live="polite">Loading…</p>
+      <p class="credits">
+        Data source:
+        <a
+          href="https://docs.google.com/spreadsheets/d/1BVwmKqB8pvuyJkSTGYOM2kAJxFMQ0jVsc6aKYz_Upes/edit?usp=sharing"
+          target="_blank"
+          rel="noopener noreferrer"
+        >Elden Ring Enemy Data spreadsheet</a>
+      </p>
+    </header>
+
+    <main class="main">
+      <aside class="results-panel">
+        <div id="results-list" class="results-list" role="listbox" aria-label="Enemy results"></div>
+      </aside>
+
+      <section id="detail-panel" class="detail-panel" aria-live="polite">
+        <div class="detail-empty">
+          <p>Select an enemy to view stats</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
