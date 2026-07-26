@@ -237,6 +237,19 @@ function displayName(name) {
 }
 
 /**
+ * Wiki search query: strip [Boss] and any parenthetical segments.
+ * e.g. "Fell Twin (Axe)" → "Fell Twin"
+ * @param {string} name
+ * @returns {string}
+ */
+function wikiSearchName(name) {
+  return displayName(name)
+    .replace(/\([^)]*\)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/**
  * Escape HTML text.
  * @param {string|number|null|undefined} s
  * @returns {string}
@@ -411,7 +424,7 @@ function renderResults() {
           data-index="${i}"
           aria-selected="${selected ? "true" : "false"}"
         >
-          <span class="result-name">${esc(displayName(e.name))}${boss}</span>
+          <span class="result-name"><span class="result-name-text">${esc(displayName(e.name))}</span>${boss}</span>
           <span class="result-meta">
             <span class="result-location">${esc(e.location)}</span>
             <span class="result-hp">HP ${esc(formatValue(e.health))}</span>
@@ -565,6 +578,8 @@ function statusRowCell(enemy, row) {
 function renderDetail(enemy) {
   const panel = document.getElementById("detail-panel");
   const name = displayName(enemy.name);
+  const wikiQuery = wikiSearchName(enemy.name);
+  const wikiUrl = `https://eldenring.wiki.gg/wiki/Special:Search?search=${encodeURIComponent(wikiQuery)}`;
   const bossBadge = enemy.isBoss ? `<span class="badge badge-boss">Boss</span>` : "";
 
   const negationHtml = DAMAGE_TYPES.map((t) => {
@@ -605,7 +620,10 @@ function renderDetail(enemy) {
   panel.innerHTML = `
     <div class="detail-header">
       <div>
-        <h2 class="detail-name">${esc(name)} ${bossBadge}</h2>
+        <h2 class="detail-name">
+          <a class="detail-name-link" href="${esc(wikiUrl)}" target="_blank" rel="noopener noreferrer" title="Search wiki for ${esc(wikiQuery)}">${esc(name)}<svg class="external-link-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+          ${bossBadge}
+        </h2>
         <p class="detail-location">
           <span class="location-text">${esc(enemy.location)}</span>
           ${defenseLabel}

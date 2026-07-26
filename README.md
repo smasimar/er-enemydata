@@ -33,7 +33,8 @@ Then open [http://localhost:8000](http://localhost:8000).
 
 ## Credits
 
-Enemy data from the [Elden Ring Enemy Data spreadsheet](https://docs.google.com/spreadsheets/d/1BVwmKqB8pvuyJkSTGYOM2kAJxFMQ0jVsc6aKYz_Upes/edit?usp=sharing).
+- Enemy data from the [Elden Ring Enemy Data spreadsheet](https://docs.google.com/spreadsheets/d/1BVwmKqB8pvuyJkSTGYOM2kAJxFMQ0jVsc6aKYz_Upes/edit?usp=sharing)
+- Icons from the [Elden Ring Wiki](https://eldenring.wiki.gg/)
 
 ## Files
 
