@@ -16,10 +16,10 @@ const RESISTANCE_TYPES = [
 const STATUS_MULT_TYPES = ["Bleed", "Frost", "Sleep", "Madness", "HP Burn Effect"];
 /** Combined resistance + status-mult rows for the merged Resistances card. */
 const STATUS_ROWS = [
-  { label: "Poison", resist: "Poison", mult: null },
-  { label: "Scarlet Rot", resist: "Scarlet Rot", mult: null },
   { label: "Bleed", resist: "Bleed", mult: "Bleed" },
   { label: "Frost", resist: "Frost", mult: "Frost" },
+  { label: "Scarlet Rot", resist: "Scarlet Rot", mult: null },
+  { label: "Poison", resist: "Poison", mult: null },
   { label: "Sleep", resist: "Sleep", mult: "Sleep" },
   { label: "Madness", resist: "Madness", mult: "Madness" },
   { label: "Deathblight", resist: "Deathblight", mult: null },
@@ -59,6 +59,22 @@ const STATUS_ICONS = {
   Sleep: "icons/Sleep.png",
   Madness: "icons/Madness.png",
   Deathblight: "icons/Death_Blight.png",
+};
+
+const RESIST_SCALE = 1500;
+
+/** Build-up reference marks. `repeat` = every multiple of small, large at multiples of large. */
+const RESIST_NOTCH_CFG = {
+  "Scarlet Rot": { small: 195, large: 390, repeat: true },
+  Frost: { small: 330, large: 660, repeat: true },
+  Bleed: { small: 150, large: 300, repeat: true },
+};
+
+/** Color step = large/"full" notch for bleed, frost, and rot. */
+const RESIST_COLOR_STEP = {
+  "Scarlet Rot": 390,
+  Frost: 660,
+  Bleed: 300,
 };
 
 const PAGE_SIZE = 80;
@@ -275,19 +291,24 @@ function iconHtml(label) {
 
 /**
  * Color for damage negation: higher = worse for the player (enemy absorbs more).
+ * Thresholds: ≤10 grey, ≤20 muted salmon, ≤40 muted rust, above that deep dark red.
  * @param {string|number|null} v
  * @returns {string}
  */
 function negationClass(v) {
   if (v === null || v === undefined) return "";
   if (typeof v !== "number") return "";
-  // Higher negation = harder to damage = worse (red)
-  if (v >= 40) return "stat-bad";
-  if (v >= 20) return "stat-poor";
-  if (v > 0) return "stat-mild-bad";
   if (v === 0) return "stat-neutral";
-  if (v > -20) return "stat-good";
-  return "stat-great";
+  if (v > 0) {
+    if (v <= 10) return "stat-neutral";
+    if (v <= 20) return "stat-neg-2";
+    if (v <= 40) return "stat-neg-3";
+    return "stat-neg-4";
+  }
+  if (v >= -10) return "stat-neutral";
+  if (v >= -20) return "stat-neg-g2";
+  if (v >= -40) return "stat-neg-g3";
+  return "stat-neg-g4";
 }
 
 /**
@@ -306,6 +327,24 @@ function resistanceClass(v) {
 }
 
 /**
+ * Bleed / frost / rot: green below 1 big notch; then the negation palette.
+ * Grey only for Immune.
+ * @param {string} label
+ * @param {string|number|null} v
+ * @returns {string}
+ */
+function resistanceBarClass(label, v) {
+  if (v === "Immune") return "stat-immune";
+  const step = RESIST_COLOR_STEP[label];
+  if (!step || typeof v !== "number") return resistanceClass(v);
+  const n = Math.floor(v / step);
+  if (n <= 0) return "stat-good";
+  if (n === 1) return "stat-neg-2";
+  if (n === 2) return "stat-neg-3";
+  return "stat-neg-4";
+}
+
+/**
  * Class for status multiplier (lower = more resistant to status damage on self).
  * @param {string|number|null} v
  * @returns {string}
@@ -318,24 +357,68 @@ function multClass(v) {
 }
 
 /**
- * Half-bar fill % for diverging negation bars (0 = empty, 100 = full half toward ±100).
- * @param {string|number|null} v
+ * ±50% zoom unless any negation is outside ±40%.
+ * @param {Enemy} enemy
  * @returns {number}
  */
-function negationBarExtent(v) {
-  if (typeof v !== "number" || v === 0) return 0;
-  return Math.max(0, Math.min(100, Math.abs(v)));
+function negationScale(enemy) {
+  const zoomOut = DAMAGE_TYPES.some((t) => {
+    const v = enemy.damageNegation[t];
+    return typeof v === "number" && Math.abs(v) > 40;
+  });
+  return zoomOut ? 100 : 50;
 }
 
 /**
- * Bar for resistances (0..700-ish).
+ * Width of one half of a diverging track (0–50% of full width).
+ * @param {string|number|null} v
+ * @param {number} scale
+ * @returns {number}
+ */
+function negationBarWidth(v, scale) {
+  if (typeof v !== "number" || v === 0) return 0;
+  return Math.max(0, Math.min(50, (Math.abs(v) / scale) * 50));
+}
+
+/**
+ * Bar for resistances (0..RESIST_SCALE). Immune fills the track.
  * @param {string|number|null} v
  * @returns {number}
  */
 function resistanceBar(v) {
   if (v === "Immune") return 100;
   if (typeof v !== "number") return 0;
-  return Math.max(0, Math.min(100, (v / 700) * 100));
+  return Math.max(0, Math.min(100, (v / RESIST_SCALE) * 100));
+}
+
+/**
+ * @param {string} label
+ * @returns {string}
+ */
+function resistanceNotches(label) {
+  const cfg = RESIST_NOTCH_CFG[label];
+  if (!cfg) return "";
+
+  /** @type {{at: number, size: string}[]} */
+  const marks = [];
+  if (cfg.repeat) {
+    for (let at = cfg.small; at <= RESIST_SCALE; at += cfg.small) {
+      const isLarge = cfg.large && at % cfg.large === 0;
+      marks.push({ at, size: isLarge ? "lg" : "sm" });
+    }
+  } else {
+    if (cfg.small <= RESIST_SCALE) marks.push({ at: cfg.small, size: "sm" });
+    if (cfg.large && cfg.large !== cfg.small && cfg.large <= RESIST_SCALE) {
+      marks.push({ at: cfg.large, size: "lg" });
+    }
+  }
+
+  return marks
+    .map((m) => {
+      const pct = Math.max(0, Math.min(100, (m.at / RESIST_SCALE) * 100));
+      return `<span class="chart-notch chart-notch-${m.size}" style="left:${pct}%" title="${m.at}"></span>`;
+    })
+    .join("");
 }
 
 // ——— Search & list ———
@@ -486,7 +569,7 @@ function populateLocationDatalist() {
 /**
  * @param {string} label
  * @param {string|number|null} value
- * @param {{className?: string, bar?: number, divergingBar?: number, highlight?: boolean, format?: 'percent'|'plain', icon?: boolean}} [opts]
+ * @param {{className?: string, bar?: number, highlight?: boolean, format?: 'percent'|'plain', icon?: boolean}} [opts]
  */
 function statCell(label, value, opts = {}) {
   const cls = opts.className || "";
@@ -498,20 +581,10 @@ function statCell(label, value, opts = {}) {
     ? `<span class="immune-badge">Immune</span>`
     : `<span class="stat-value">${esc(display)}</span>`;
 
-  let barHtml = "";
-  if (opts.divergingBar !== undefined && typeof opts.divergingBar === "number") {
-    const v = opts.divergingBar;
-    // extent 0–100 of half-track → convert to % of full bar (max half = 50%)
-    const halfPct = negationBarExtent(v) / 2;
-    const dir = v > 0 ? "is-pos" : v < 0 ? "is-neg" : "is-zero";
-    barHtml = `
-      <div class="stat-bar stat-bar-diverging" aria-hidden="true">
-        <div class="stat-bar-center"></div>
-        <div class="stat-bar-fill ${dir}" style="width:${halfPct}%"></div>
-      </div>`;
-  } else if (opts.bar !== undefined) {
-    barHtml = `<div class="stat-bar" aria-hidden="true"><div class="stat-bar-fill ${cls}" style="width:${opts.bar}%"></div></div>`;
-  }
+  const barHtml =
+    opts.bar !== undefined
+      ? `<div class="stat-bar" aria-hidden="true"><div class="stat-bar-fill ${cls}" style="width:${opts.bar}%"></div></div>`
+      : "";
 
   const icon = opts.icon !== false ? iconHtml(label) : "";
 
@@ -537,45 +610,85 @@ function groupCard(title, bodyHtml, extraClass = "") {
 }
 
 /**
- * Merged resistance + incoming status damage multiplier cell.
+ * Combined diverging bar chart for all damage-negation types.
  * @param {Enemy} enemy
- * @param {{label: string, resist: string|null, mult: string|null}} row
  */
-function statusRowCell(enemy, row) {
-  const resistVal = row.resist ? enemy.resistances[row.resist] : null;
-  const multVal = row.mult ? enemy.statusMults[row.mult] : null;
-  const hasResist = row.resist != null;
-  const isImmune = resistVal === "Immune";
-  const cls = hasResist ? resistanceClass(resistVal) : multClass(multVal);
-  const icon = iconHtml(row.label);
+function negationChart(enemy) {
+  const scale = negationScale(enemy);
+  const rows = DAMAGE_TYPES.map((t) => {
+    const v = enemy.damageNegation[t];
+    const cls = negationClass(v);
+    const n = typeof v === "number" ? v : 0;
+    const dir = n > 0 ? "is-pos" : n < 0 ? "is-neg" : "is-zero";
+    return `
+      <div class="chart-row ${cls}">
+        <div class="chart-label">${iconHtml(t)}<span>${esc(t)}</span></div>
+        <div class="chart-track chart-track-diverging" aria-hidden="true">
+          <div class="chart-center"></div>
+          <div class="chart-fill ${dir} ${cls}" style="width:${negationBarWidth(n, scale)}%"></div>
+        </div>
+        <div class="chart-value">${esc(formatPercent(v))}</div>
+      </div>`;
+  }).join("");
 
-  const resistHtml = hasResist
-    ? isImmune
-      ? `<span class="immune-badge">Immune</span>`
-      : `<span class="stat-value">${esc(formatValue(resistVal))}</span>`
-    : "";
+  return `
+    <div class="chart" role="img" aria-label="Damage negation by type">
+      ${rows}
+      <div class="chart-axis" aria-hidden="true">
+        <div class="chart-axis-track">
+          <span>−${scale}%</span>
+          <span>0</span>
+          <span>+${scale}%</span>
+        </div>
+      </div>
+    </div>`;
+}
 
-  const multHtml =
-    multVal !== null && multVal !== undefined
+/**
+ * Combined bar chart for resistances and status-damage multipliers.
+ * @param {Enemy} enemy
+ */
+function resistanceChart(enemy) {
+  const rows = STATUS_ROWS.map((row) => {
+    const resistVal = row.resist ? enemy.resistances[row.resist] : null;
+    const multVal = row.mult ? enemy.statusMults[row.mult] : null;
+    const hasResist = row.resist != null;
+    const isImmune = resistVal === "Immune";
+    const cls = hasResist ? resistanceBarClass(row.label, resistVal) : multClass(multVal);
+
+    const resistHtml = hasResist
+      ? isImmune
+        ? `<span class="chart-num chart-imn" title="Immune">IMN</span>`
+        : `<span class="chart-num">${esc(formatValue(resistVal))}</span>`
+      : `<span class="chart-num chart-num-empty"></span>`;
+    const showMult = !isImmune && multVal !== null && multVal !== undefined;
+    const multHtml = showMult
       ? `<span class="status-mult ${multClass(multVal)}" title="Incoming status damage multiplier">×${esc(
           formatValue(multVal)
         )}</span>`
-      : "";
+      : `<span class="status-mult status-mult-empty"></span>`;
 
-  const barHtml = hasResist
-    ? `<div class="stat-bar" aria-hidden="true"><div class="stat-bar-fill ${cls}" style="width:${resistanceBar(
-        resistVal
-      )}%"></div></div>`
-    : "";
+    const notches = !isImmune && RESIST_NOTCH_CFG[row.label];
+    const barHtml = hasResist
+      ? `<div class="chart-track${notches ? " chart-track-notches" : ""}" aria-hidden="true">
+          <div class="chart-fill ${cls}" style="width:${resistanceBar(resistVal)}%"></div>
+          ${notches ? resistanceNotches(row.label) : ""}
+        </div>`
+      : `<div class="chart-track chart-track-empty" aria-hidden="true"></div>`;
+
+    return `
+      <div class="chart-row chart-row-resist ${cls}">
+        <div class="chart-label">${iconHtml(row.label)}<span>${esc(row.label)}</span></div>
+        ${barHtml}
+        <div class="chart-value">${resistHtml}</div>
+        <div class="chart-mult">${multHtml}</div>
+      </div>`;
+  }).join("");
 
   return `
-    <div class="stat-cell status-row ${cls}">
-      <span class="stat-label">${icon}<span>${esc(row.label)}</span></span>
-      <div class="status-values">
-        ${resistHtml}
-        ${multHtml}
-      </div>
-      ${barHtml}
+    <div class="chart" role="img" aria-label="Status resistances">
+      ${rows}
+      <p class="card-hint">Values are build-up resistance; × multipliers are incoming status damage.</p>
     </div>`;
 }
 
@@ -589,16 +702,8 @@ function renderDetail(enemy) {
   const wikiUrl = `https://eldenring.wiki.gg/wiki/Special:Search?search=${encodeURIComponent(wikiQuery)}`;
   const bossBadge = enemy.isBoss ? `<span class="badge badge-boss">Boss</span>` : "";
 
-  const negationHtml = DAMAGE_TYPES.map((t) => {
-    const v = enemy.damageNegation[t];
-    return statCell(t, v, {
-      className: negationClass(v),
-      divergingBar: typeof v === "number" ? v : 0,
-      format: "percent",
-    });
-  }).join("");
-
-  const statusHtml = STATUS_ROWS.map((row) => statusRowCell(enemy, row)).join("");
+  const negationHtml = negationChart(enemy);
+  const statusHtml = resistanceChart(enemy);
 
   const poiseHtml = [
     statCell("Base", enemy.poise.base, { icon: false }),
@@ -649,13 +754,10 @@ function renderDetail(enemy) {
     </div>
 
     <div class="stat-groups">
-      ${groupCard("Damage Negation", `<div class="stat-grid cols-4">${negationHtml}</div>`, "card-negation")}
-      ${groupCard(
-        "Resistances",
-        `<div class="stat-grid cols-4">${statusHtml}</div>
-         <p class="card-hint">Values are build-up resistance; × multipliers are incoming status damage.</p>`,
-        "card-resist"
-      )}
+      <div class="stat-charts">
+        ${groupCard("Damage Negation", negationHtml, "card-negation")}
+        ${groupCard("Resistances", statusHtml, "card-resist")}
+      </div>
       ${groupCard("Poise", `<div class="stat-grid cols-4">${poiseHtml}</div>`)}
       ${groupCard('Enemy "Part" Damage Multipliers', `<div class="stat-grid cols-5">${partsHtml}</div>`)}
     </div>
