@@ -1,6 +1,6 @@
 /**
  * Elden Ring Enemy Data Browser
- * Parses er-enemydata.csv and provides search + grouped stat views.
+ * Loads live data from the Elden Ring Enemy Data spreadsheet and provides search + grouped stat views.
  */
 
 const DAMAGE_TYPES = ["Phys", "Strike", "Slash", "Pierce", "Magic", "Fire", "Ltng", "Holy"];
@@ -89,23 +89,31 @@ let debounceTimer = null;
 /** When false (default), only bosses are listed. */
 let showAllEnemies = false;
 
+// ——— Data source ———
+
+/** Live CSV export of the "NG" tab of the Elden Ring Enemy Data spreadsheet. */
+const SHEET_ID = "1BVwmKqB8pvuyJkSTGYOM2kAJxFMQ0jVsc6aKYz_Upes";
+const SHEET_GID = "0";
+const DATA_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
+
 // ——— CSV parsing ———
 
 /**
- * Quote-aware CSV line splitter.
- * @param {string} line
- * @returns {string[]}
+ * Quote-aware CSV parser (handles escaped quotes and newlines inside quotes).
+ * @param {string} text
+ * @returns {string[][]}
  */
-function parseCsvLine(line) {
-  const fields = [];
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
   let current = "";
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
     if (inQuotes) {
       if (ch === '"') {
-        if (line[i + 1] === '"') {
+        if (text[i + 1] === '"') {
           current += '"';
           i++;
         } else {
@@ -117,14 +125,23 @@ function parseCsvLine(line) {
     } else if (ch === '"') {
       inQuotes = true;
     } else if (ch === ",") {
-      fields.push(current);
+      row.push(current);
+      current = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(current);
+      rows.push(row);
+      row = [];
       current = "";
     } else {
       current += ch;
     }
   }
-  fields.push(current);
-  return fields;
+  if (current !== "" || row.length > 0) {
+    row.push(current);
+    rows.push(row);
+  }
+  return rows;
 }
 
 /**
@@ -146,21 +163,6 @@ function parseValue(raw) {
 }
 
 /**
- * @param {string[]} row
- * @param {number} start
- * @param {string[]} keys
- * @returns {Record<string, string|number|null>}
- */
-function mapGroup(row, start, keys) {
-  /** @type {Record<string, string|number|null>} */
-  const out = {};
-  for (let i = 0; i < keys.length; i++) {
-    out[keys[i]] = parseValue(row[start + i]);
-  }
-  return out;
-}
-
-/**
  * @typedef {object} Enemy
  * @property {string} location
  * @property {string} name
@@ -172,46 +174,108 @@ function mapGroup(row, start, keys) {
  * @property {Record<string, string|number|null>} damageNegation
  * @property {Record<string, string|number|null>} resistances
  * @property {Record<string, string|number|null>} statusMults
- * @property {{base: *, incomingMult: *, effective: *, regenDelay: *}} poise
+ * @property {{base: *, armor: *, incomingMult: *, effective: *, regenDelay: *}} poise
  * @property {Record<string, string|number|null>} parts
  */
+
+/**
+ * Build a column lookup from the two header rows.
+ * Row 0 holds group names (e.g. "Damage Negation") at the first column of each group;
+ * row 1 holds column names. Keys are "Group::Column" and plain "Column" (first match).
+ * @param {string[]} groupRow
+ * @param {string[]} nameRow
+ * @returns {(group: string|null, name: string) => number}
+ */
+function buildColumnIndex(groupRow, nameRow) {
+  /** @type {Map<string, number>} */
+  const map = new Map();
+  let group = "";
+  for (let i = 0; i < nameRow.length; i++) {
+    const g = (groupRow[i] || "").trim();
+    if (g) group = g;
+    const name = (nameRow[i] || "").trim();
+    if (!name) continue;
+    const grouped = `${group}::${name}`;
+    if (!map.has(grouped)) map.set(grouped, i);
+    if (!map.has(name)) map.set(name, i);
+  }
+  return (groupName, name) => {
+    if (groupName) {
+      for (const [key, idx] of map) {
+        const [g, n] = key.split("::");
+        if (n === name && g !== undefined && g.toLowerCase().startsWith(groupName.toLowerCase())) return idx;
+      }
+      return -1;
+    }
+    return map.has(name) ? /** @type {number} */ (map.get(name)) : -1;
+  };
+}
 
 /**
  * @param {string} text
  * @returns {Enemy[]}
  */
 function parseEnemies(text) {
-  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.length > 0);
+  const rows = parseCsv(text.replace(/^﻿/, ""));
+  if (rows.length < 2) throw new Error("Spreadsheet has no header rows");
   // Row 0 = group headers, row 1 = column names, data from row 2
+  const col = buildColumnIndex(rows[0], rows[1]);
+
+  /** @param {string|null} group @param {string} name */
+  const need = (group, name) => {
+    const idx = col(group, name);
+    if (idx < 0) throw new Error(`Missing column "${group ? group + " › " : ""}${name}"`);
+    return idx;
+  };
+  /** @param {string} group @param {string[]} keys */
+  const groupCols = (group, keys) => keys.map((k) => [k, col(group, k)]);
+  /** @param {string[]} row @param {Array<[string, number]>} cols */
+  const mapCols = (row, cols) => {
+    /** @type {Record<string, string|number|null>} */
+    const out = {};
+    for (const [k, idx] of cols) out[k] = idx < 0 ? null : parseValue(row[idx]);
+    return out;
+  };
+
+  const cLocation = need(null, "Location");
+  const cName = need(null, "Name");
+  const cId = col(null, "Npc_ID") >= 0 ? col(null, "Npc_ID") : need(null, "ID");
+  const cHealth = need(null, "Health");
+  const cDlc = col(null, "dlcClear");
+  // Defense columns are always identical — a flat location difficulty multiplier
+  const cDefense = need("Defense", "Phys");
+  const negationCols = groupCols("Damage Negation", DAMAGE_TYPES);
+  const resistCols = groupCols("Resistances", RESISTANCE_TYPES);
+  const multCols = groupCols("Incoming Status", STATUS_MULT_TYPES);
+  const poiseCols = groupCols("Poise", ["Base", "Armor", "Incoming Mult", "Effective", "Regen Delay"]);
+  const partCols = groupCols("Enemy", PART_LABELS);
+
   const enemies = [];
-
-  for (let i = 2; i < lines.length; i++) {
-    const row = parseCsvLine(lines[i]);
-    if (!row[1]) continue;
-
-    const name = (row[1] || "").trim();
-    const location = (row[0] || "").trim();
-    // Defense columns are always identical — a flat location difficulty multiplier
-    const defense = /** @type {number|null} */ (parseValue(row[7]));
+  for (let i = 2; i < rows.length; i++) {
+    const row = rows[i];
+    const name = (row[cName] || "").trim();
+    if (!name) continue;
+    const poise = mapCols(row, poiseCols);
 
     enemies.push({
-      location,
+      location: (row[cLocation] || "").trim(),
       name,
-      id: String(row[2] || "").trim(),
-      health: /** @type {number|null} */ (parseValue(row[4])),
-      dlcClear: parseValue(row[5]),
+      id: String(row[cId] || "").trim(),
+      health: /** @type {number|null} */ (parseValue(row[cHealth])),
+      dlcClear: cDlc < 0 ? null : parseValue(row[cDlc]),
       isBoss: /\[Boss\]/i.test(name),
-      defense,
-      damageNegation: mapGroup(row, 16, DAMAGE_TYPES),
-      resistances: mapGroup(row, 25, RESISTANCE_TYPES),
-      statusMults: mapGroup(row, 33, STATUS_MULT_TYPES),
+      defense: /** @type {number|null} */ (parseValue(row[cDefense])),
+      damageNegation: mapCols(row, negationCols),
+      resistances: mapCols(row, resistCols),
+      statusMults: mapCols(row, multCols),
       poise: {
-        base: parseValue(row[39]),
-        incomingMult: parseValue(row[40]),
-        effective: parseValue(row[41]),
-        regenDelay: parseValue(row[42]),
+        base: poise["Base"],
+        armor: poise["Armor"],
+        incomingMult: poise["Incoming Mult"],
+        effective: poise["Effective"],
+        regenDelay: poise["Regen Delay"],
       },
-      parts: mapGroup(row, 44, PART_LABELS),
+      parts: mapCols(row, partCols),
     });
   }
 
@@ -249,7 +313,7 @@ function formatPercent(v) {
  * @returns {string}
  */
 function displayName(name) {
-  return name.replace(/\s*\[Boss\]\s*/gi, "").trim();
+  return name.replace(/\s*\[Boss\]\s*/gi, " ").replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -707,6 +771,7 @@ function renderDetail(enemy) {
 
   const poiseHtml = [
     statCell("Base", enemy.poise.base, { icon: false }),
+    statCell("Armor", enemy.poise.armor, { icon: false }),
     statCell("Incoming Mult", enemy.poise.incomingMult, { icon: false }),
     statCell("Effective", enemy.poise.effective, { icon: false }),
     statCell("Regen Delay", enemy.poise.regenDelay, { icon: false }),
@@ -758,7 +823,7 @@ function renderDetail(enemy) {
         ${groupCard("Damage Negation", negationHtml, "card-negation")}
         ${groupCard("Resistances", statusHtml, "card-resist")}
       </div>
-      ${groupCard("Poise", `<div class="stat-grid cols-4">${poiseHtml}</div>`)}
+      ${groupCard("Poise", `<div class="stat-grid cols-5">${poiseHtml}</div>`)}
       ${groupCard('Enemy "Part" Damage Multipliers', `<div class="stat-grid cols-5">${partsHtml}</div>`)}
     </div>
   `;
@@ -769,8 +834,9 @@ function renderDetail(enemy) {
 async function init() {
   const countEl = document.getElementById("result-count");
   try {
-    const res = await fetch("er-enemydata.csv");
-    if (!res.ok) throw new Error(`Failed to load CSV (${res.status})`);
+    countEl.textContent = "Loading live data…";
+    const res = await fetch(DATA_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Failed to load spreadsheet (${res.status})`);
     const text = await res.text();
     allEnemies = parseEnemies(text);
     updateToggleButton();
@@ -799,8 +865,10 @@ async function init() {
     countEl.textContent = "Failed to load data";
     document.getElementById("results-list").innerHTML = `
       <div class="results-empty">
-        Could not load <code>er-enemydata.csv</code>.<br />
-        Serve this folder over HTTP (e.g. <code>python -m http.server</code>) and reload.
+        Could not load live data from the
+        <a href="https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit" target="_blank" rel="noopener noreferrer">spreadsheet</a>.<br />
+        Check your connection and reload.<br />
+        <small>${esc(err instanceof Error ? err.message : String(err))}</small>
       </div>`;
   }
 }
